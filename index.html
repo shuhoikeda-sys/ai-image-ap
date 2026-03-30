@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ドラマシーン生成ツール - GitHub公開対応版</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        body { margin: 0; padding: 0; background-color: #f8fafc; color: #1e293b; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .animate-spin-slow { animation: spin 2s linear infinite; }
+        textarea::-webkit-scrollbar { width: 6px; }
+        textarea::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 3px; }
+        .drop-zone:focus { border-color: #3b82f6; background-color: #eff6ff; outline: none; box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.1); }
+        .natural-shadow { box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.04), 0 8px 10px -6px rgba(0, 0, 0, 0.04); }
+        .glass-panel { background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(12px); }
+        .img-preview { object-fit: cover; width: 100%; height: 100%; border-radius: 12px; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel" data-presets="env,react">
+        const { useState, useEffect, useCallback, useMemo } = React;
+        const { createRoot } = ReactDOM;
+
+        // API Key: 実行環境から自動提供（バックエンド経由の場合は不要になりますが、ロジック維持のため空で残します）
+        const apiKey = ""; 
+
+        // --- アイコン ---
+        const UserIcon = () => (
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 text-blue-600">
+                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" />
+            </svg>
+        );
+        const MapPinIcon = () => (
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 text-emerald-600">
+                <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" /><circle cx="12" cy="10" r="3" />
+            </svg>
+        );
+        const EditIcon = () => (
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 text-orange-600">
+                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+            </svg>
+        );
+        const TrashIcon = () => (
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 text-white">
+                <polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+            </svg>
+        );
+        const RefreshIcon = () => (
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5 animate-spin-slow">
+                <polyline points="23 4 23 10 17 10" /><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+            </svg>
+        );
+
+        const App = () => {
+            const [personImgs, setPersonImgs] = useState([]); 
+            const [placeImg, setPlaceImg] = useState(null);
+            const [plot, setPlot] = useState("");
+            const [time, setTime] = useState("昼");
+            const [ratio, setRatio] = useState("16:9");
+            const [draftPrompt, setDraftPrompt] = useState("");
+            const [loading, setLoading] = useState(false);
+            const [status, setStatus] = useState("");
+            const [resultImg, setResultImg] = useState(null);
+            const [errorMessage, setErrorMessage] = useState("");
+
+            const extractImageData = (dataUrl) => {
+                if (!dataUrl) return null;
+                try {
+                    const parts = dataUrl.split(',');
+                    const mime = parts[0].match(/:(.*?);/)[1];
+                    const base64 = parts[1];
+                    return { mime, base64 };
+                } catch (e) {
+                    return null;
+                }
+            };
+
+            const handlePaste = (e, setter, isAppend = false) => {
+                const items = e.clipboardData.items;
+                for (let i = 0; i < items.length; i++) {
+                    if (items[i].type.indexOf("image") !== -1) {
+                        const file = items[i].getAsFile();
+                        const reader = new FileReader();
+                        reader.onload = (event) => {
+                            if (isAppend) {
+                                setPersonImgs(prev => (prev.length >= 5 ? prev : [...prev, event.target.result]));
+                            } else {
+                                setter(event.target.result);
+                            }
+                        };
+                        reader.readAsDataURL(file);
+                        break;
+                    }
+                }
+            };
+
+            const fetchWithRetry = async (url, payload, retries = 5, delay = 1000) => {
+                for (let i = 0; i < retries; i++) {
+                    try {
+                        const response = await fetch(url, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+                        if (response.status === 401) throw new Error("認証エラー: APIキーの設定に問題があります。");
+                        if (!response.ok) {
+                            const detail = await response.text();
+                            throw new Error(`APIエラー (${response.status})`);
+                        }
+                        return await response.json();
+                    } catch (err) {
+                        if (err.message.includes("認証") || i === retries - 1) throw err;
+                        await new Promise(res => setTimeout(res, delay * Math.pow(2, i)));
+                    }
+                }
+            };
+
+            const createDraftPrompt = async () => {
+                if (personImgs.length === 0 || !placeImg) {
+                    setErrorMessage("画像（人物と場所）を貼り付けてください。");
+                    return;
+                }
+
+                setLoading(true);
+                setErrorMessage("");
+                setDraftPrompt("");
+                setStatus("各人物のDNAを識別・分析中...");
+                
+                try {
+                    const personParts = personImgs.flatMap((img, idx) => {
+                        const data = extractImageData(img);
+                        return [
+                            { text: `これが「画像${idx + 1}」の人物です：` },
+                            { inlineData: { mimeType: data.mime, data: data.base64 } }
+                        ];
+                    });
+                    
+                    const placeData = extractImageData(placeImg);
+                    const placeParts = [
+                        { text: "これが舞台の雰囲気の参考画像です：" },
+                        { inlineData: { mimeType: placeData.mime, data: placeData.base64 } }
+                    ];
+
+                    const analysisPayload = {
+                        contents: [{
+                            role: "user",
+                            parts: [
+                                { text: `あなたは世界最高レベルの映画監督です。提供された画像を順番通り「画像1」「画像2」として厳密に認識し、プロット指示に従って最高品質の日本語プロンプトを作成してください。
+
+                                    【重要ルール：人物識別】
+                                    - 人物の画像は提供された順番に「画像1」「画像2」「画像3」...とラベル付けされています。
+                                    - プロット指示の中で「画像1の人物が～」と言及された場合、その番号の画像の特徴（顔の造形、髪型、体格）を正確にその人物に割り当ててください。
+                                    
+                                    【分析タスク】
+                                    1. 各人物の同一性：各番号に対応する人物の顔のパーツ、骨格、髪、肌の質感を精密に言語化。
+                                    2. 状況：プロット「${plot}」を生活感のある自然なシーンとして描写。
+                                    3. 画角・視線：カメラ目線は禁止。指示された対象へ視線を向ける。
+                                    4. 空間：場所画像から色彩やスタイルを抽出し再構成。
+                                    5. 比率：アスペクト比「${ratio}」を厳守。
+
+                                    出力は「日本語」のプロンプトテキストのみにしてください。`
+                                },
+                                ...personParts,
+                                ...placeParts
+                            ]
+                        }]
+                    };
+
+                    const result = await fetchWithRetry("/api/analyze", analysisPayload);
+                    const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
+                    if (!text) throw new Error("AI分析に失敗しました。");
+
+                    setDraftPrompt(text.trim());
+                    setStatus("識別完了。プロンプト案が作成されました。");
+                } catch (error) {
+                    setErrorMessage(`分析エラー: ${error.message}`);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const executeGeneration = async () => {
+                setLoading(true);
+                setErrorMessage("");
+                setResultImg(null);
+                setStatus(`識別された人物を配置し、比率 ${ratio} で生成中...`);
+                
+                try {
+                    const response = await fetch("/api/generate", {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            prompt: draftPrompt,
+                            ratio
+                        })
+                    });
+
+                    if (!response.ok) throw new Error(`生成エラー (${response.status})`);
+                    const genResult = await response.json();
+                    const base64Image = genResult.predictions?.[0]?.bytesBase64Encoded;
+
+                    if (base64Image) {
+                        setResultImg(`data:image/png;base64,${base64Image}`);
+                        setStatus("");
+                    } else {
+                        throw new Error("生成データが空です。");
+                    }
+                } catch (error) {
+                    setErrorMessage(`画像生成エラー: ${error.message}`);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            return (
+                <div className="max-w-6xl mx-auto p-4 md:p-10">
+                    <header className="mb-10 text-center">
+                        <h1 className="text-4xl font-black text-slate-900 tracking-tighter mb-2 italic">🎭 SCENE GEN <span className="text-blue-600 border-b-4 border-blue-100">IDENTIFIED</span></h1>
+                        <p className="text-slate-500 font-medium text-sm italic">画像を「画像1、2...」として識別し、指示を正確にキャラクターへ反映します。</p>
+                    </header>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 mb-16">
+                        {/* 左：素材貼り付け */}
+                        <div className="lg:col-span-4 space-y-6">
+                            <div className="glass-panel rounded-[2rem] p-6 border border-white shadow-xl natural-shadow">
+                                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-5 flex items-center gap-2">
+                                    <UserIcon /> 1. 顔画像を貼り付け (順に1, 2, 3...)
+                                </h3>
+                                <div className="grid grid-cols-2 gap-4">
+                                    {personImgs.map((img, index) => (
+                                        <div key={index} className="relative group aspect-square rounded-2xl overflow-hidden border-2 border-white shadow-md bg-slate-100">
+                                            <img src={img} className="img-preview" />
+                                            <div className="absolute top-2 left-2 bg-blue-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-lg">
+                                                画像{index + 1}
+                                            </div>
+                                            <button onClick={() => setPersonImgs(personImgs.filter((_, i) => i !== index))} className="absolute inset-0 bg-red-600/60 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-all text-white">
+                                                <TrashIcon />
+                                            </button>
+                                        </div>
+                                    ))}
+                                    {personImgs.length < 5 && (
+                                        <div 
+                                            className="drop-zone aspect-square border-2 border-dashed border-slate-200 rounded-2xl flex flex-col items-center justify-center cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition-all text-slate-300"
+                                            tabIndex="0" onPaste={(e) => handlePaste(e, null, true)}
+                                        >
+                                            <span className="text-[9px] font-black uppercase tracking-tighter text-center leading-tight">
+                                                画像を貼り付けて<br/>「画像{personImgs.length + 1}」に登録
+                                            </span>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
+                            <div className="glass-panel rounded-[2rem] p-6 border border-white shadow-xl natural-shadow">
+                                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-5 flex items-center gap-2">
+                                    <MapPinIcon /> 2. 場所・雰囲気画像を貼り付け
+                                </h3>
+                                <div 
+                                    className="drop-zone border-2 border-dashed border-slate-200 rounded-2xl p-4 min-h-[120px] flex items-center justify-center bg-slate-50/50 cursor-pointer hover:border-blue-500 transition-all overflow-hidden"
+                                    tabIndex="0" onPaste={(e) => handlePaste(e, setPlaceImg, false)}
+                                >
+                                    {placeImg ? (
+                                        <img src={placeImg} className="max-h-24 rounded-xl shadow-lg" />
+                                    ) : (
+                                        <span className="text-[9px] font-black uppercase tracking-widest text-center text-slate-300 leading-tight">
+                                            場所の画像を貼り付け
+                                        </span>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* 右：詳細設定 */}
+                        <div className="lg:col-span-8 space-y-8">
+                            <div className="bg-slate-900 rounded-[2.5rem] p-8 shadow-2xl space-y-6 border border-slate-800">
+                                <div>
+                                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 block italic">
+                                        3. プロット入力 (例: 画像1の女性が、画像2の男性を驚かせている様子)
+                                    </label>
+                                    <textarea
+                                        value={plot}
+                                        onChange={(e) => setPlot(e.target.value)}
+                                        placeholder="例: 画像1の女性が画像2の男性と向かい合って微笑んでいる。画像3の子供は後ろで遊んでいる。"
+                                        className="w-full h-24 bg-slate-950 text-white p-6 rounded-3xl border border-slate-800 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 outline-none resize-none text-base leading-relaxed"
+                                    ></textarea>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-6 border-t border-slate-800 pt-6">
+                                    <div className="space-y-2">
+                                        <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Time Setting</label>
+                                        <select value={time} onChange={(e) => setTime(e.target.value)} className="w-full bg-slate-950 text-slate-300 p-3 rounded-2xl border border-slate-800 outline-none cursor-pointer">
+                                            <option>朝</option><option>昼</option><option>夕方</option><option>夜（高輝度）</option>
+                                        </select>
+                                    </div>
+                                    <div className="space-y-2">
+                                        <label className="text-[10px] font-black text-blue-400 uppercase tracking-widest">Ratio</label>
+                                        <select value={ratio} onChange={(e) => setRatio(e.target.value)} className="w-full bg-blue-600 text-white p-3 rounded-2xl border-none outline-none cursor-pointer font-bold shadow-lg shadow-blue-900/40">
+                                            <option>16:9</option><option>9:16</option><option>1:1</option><option>4:3</option><option>3:4</option>
+                                        </select>
+                                    </div>
+                                </div>
+
+                                <button
+                                    onClick={createDraftPrompt}
+                                    disabled={loading || personImgs.length === 0 || !placeImg}
+                                    className={`w-full py-5 rounded-3xl font-black uppercase tracking-widest transition-all flex items-center justify-center gap-3 ${loading ? 'bg-slate-800 text-slate-600' : 'bg-white text-slate-900 hover:scale-[1.01] shadow-xl'}`}
+                                >
+                                    {loading && status.includes("分析") ? <RefreshIcon /> : "1. キャラクター識別・分析"}
+                                </button>
+                            </div>
+
+                            {draftPrompt && (
+                                <div className="bg-white rounded-[2.5rem] p-8 border border-slate-100 natural-shadow space-y-6 animate-in fade-in slide-in-from-bottom-6 duration-700">
+                                    <div className="flex items-center justify-between">
+                                        <div className="flex items-center gap-2 text-slate-500">
+                                            <EditIcon />
+                                            <span className="text-xs font-bold uppercase tracking-widest">4. 最終プロンプトの確認 (識別子が反映されています)</span>
+                                        </div>
+                                        <span className="bg-blue-50 text-blue-600 text-[10px] font-bold px-4 py-1.5 rounded-full border border-blue-100 uppercase italic">Identified Mode</span>
+                                    </div>
+                                    <textarea
+                                        value={draftPrompt}
+                                        onChange={(e) => setDraftPrompt(e.target.value)}
+                                        className="w-full h-44 bg-slate-50 text-slate-800 p-6 rounded-[2rem] border border-slate-200 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/5 outline-none resize-none text-sm font-medium leading-relaxed"
+                                    ></textarea>
+                                    <button
+                                        onClick={executeGeneration}
+                                        disabled={loading}
+                                        className={`w-full py-5 rounded-3xl font-black uppercase tracking-widest transition-all flex items-center justify-center gap-3 ${loading ? 'bg-slate-200 text-slate-400' : 'bg-blue-600 text-white hover:bg-blue-500 shadow-2xl active:scale-95'}`}
+                                    >
+                                        {loading && status.includes("生成") ? <RefreshIcon /> : "2. 識別したキャラで画像生成"}
+                                    </button>
+                                </div>
+                            )}
+
+                            {errorMessage && (
+                                <div className="p-6 bg-red-50 text-red-600 text-xs text-center font-bold rounded-[1.5rem] border border-red-100">
+                                    ⚠️ {errorMessage}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* 結果表示 */}
+                    {(loading || resultImg) && (
+                        <div className="space-y-8 py-10 border-t border-slate-100">
+                            <h2 className="text-3xl font-black text-slate-900 flex items-center gap-4 uppercase tracking-tighter">
+                                <span className="w-10 h-1.5 bg-blue-600 rounded-full"></span>
+                                Developed Scene
+                            </h2>
+                            <div className="bg-white rounded-[3rem] overflow-hidden border-[10px] border-white natural-shadow relative flex items-center justify-center bg-slate-50 min-h-[400px]">
+                                {loading && status.includes("生成") ? (
+                                    <div className="text-center p-20 glass-panel absolute inset-0 z-10 flex flex-col items-center justify-center">
+                                        <div className="text-blue-600"><RefreshIcon /></div>
+                                        <p className="text-slate-500 text-xs font-black uppercase mt-6 tracking-[0.2em]">{status}</p>
+                                    </div>
+                                ) : (
+                                    resultImg && (
+                                        <img 
+                                            src={resultImg} 
+                                            className="w-full h-auto object-contain transition-opacity duration-1000 select-none shadow-inner" 
+                                            style={{ 
+                                                aspectRatio: ratio.replace(':', '/'),
+                                                maxHeight: '85vh'
+                                            }} 
+                                        />
+                                    )
+                                )}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const root = createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
