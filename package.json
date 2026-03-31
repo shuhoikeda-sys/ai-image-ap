@@ -1,0 +1,10 @@
+{
+  "name": "scene-gen-tool",
+  "version": "1.0.0",
+  "engines": {
+    "node": "20.x"
+  },
+  "dependencies": {
+    "node-fetch": "^2.6.7"
+  }
+}
