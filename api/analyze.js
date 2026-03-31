@@ -5,12 +5,11 @@ export default async function handler(req, res) {
     const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
     const apiKey = process.env.GEMINI_API_KEY;
 
-    // --- 【修正ポイント】ここを完全にコピーしてください ---
-    // v1 ＋ gemini-1.5-flash の組み合わせが最も安定しています
-    const apiUrl = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
-    // ---------------------------------------------------
+    // 🚨 ここが運命の分かれ道です 🚨
+    // v1beta を使い、かつモデル名から -latest を完全に消したこの形が正解です
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
 
-    console.log("Calling Google API..."); // ログに「今から呼ぶよ」と表示
+    console.log("Attempting to call Google API v1beta...");
 
     const response = await fetch(apiUrl, {
       method: "POST",
