@@ -1,22 +1,16 @@
 export default async function handler(req, res) {
   try {
-    if (req.method !== "POST") {
-      return res.status(200).json({ message: "API is working." });
-    }
+    if (req.method !== "POST") return res.status(200).json({ message: "Ready" });
 
     const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
-    if (!body) return res.status(400).json({ error: "No body provided" });
-
     const apiKey = process.env.GEMINI_API_KEY;
 
-    // 🚨 APIキーが入っていない場合の安全装置を追加
-    if (!apiKey) {
-      console.error("Critical Error: GEMINI_API_KEY is not set in Vercel!");
-      return res.status(500).json({ error: "Server configuration error: API Key missing." });
-    }
+    // --- 【修正ポイント】ここを完全にコピーしてください ---
+    // v1 ＋ gemini-1.5-flash の組み合わせが最も安定しています
+    const apiUrl = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+    // ---------------------------------------------------
 
-    // ✅ v1beta と gemini-1.5-flash の組み合わせに戻します
-    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+    console.log("Calling Google API..."); // ログに「今から呼ぶよ」と表示
 
     const response = await fetch(apiUrl, {
       method: "POST",
@@ -36,6 +30,6 @@ export default async function handler(req, res) {
 
   } catch (err) {
     console.error("Fatal Error:", err.message);
-    res.status(500).json({ error: "Analyze API crashed", message: err.message });
+    res.status(500).json({ error: "API Crashed", details: err.message });
   }
 }
