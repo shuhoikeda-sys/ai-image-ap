@@ -14,8 +14,8 @@ export default async function handler(req, res) {
     // 3. Google Gemini APIへのリクエスト
     // モデル名を -latest にし、パスの空白などを徹底排除しています
     const apiKey = process.env.GEMINI_API_KEY;
-    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`;
-
+    const apiUrl = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+    
     const response = await fetch(apiUrl, {
       method: "POST",
       headers: {
